@@ -1,0 +1,290 @@
+統合ダッシュボード 設計書
+
+対象環境：エックスサーバー / WordPress / GA4 / スマートフォン対応PWA
+文書バージョン：1.0
+作成日：2026年10月17日
+
+------------------------------------------------------------------------
+
+1. 目的
+
+note、X、WordPress、MQL5
+Marketの運用実績を一か所に集約し、スマートフォンからサービス別の数値や日別推移を確認できる統合ダッシュボードを構築する。
+
+初期段階ではWordPressをアプリケーション基盤とし、GA4のデータを自動取得する。note、X、MQL5
+Marketについては、公式APIやデータエクスポートの利用条件を確認し、接続方法が確定するまでは手動データ登録を利用する。
+
+2. システム構成
+
+    スマートフォン / PC
+            |
+            | HTTPS
+            v
+    WordPress固定ページ（[med_dashboard]）
+            |
+            +-- ダッシュボードUI（HTML / CSS / JavaScript）
+            +-- Chart.jsによる日別推移グラフ
+            +-- WordPress REST API（管理者認証）
+                        |
+                        v
+              WordPressプラグイン
+              Media & EA Dashboard
+                        |
+              +---------+----------+
+              |                    |
+              v                    v
+     WordPress専用DBテーブル   GA4 Data API
+              ^                    ^
+              |                    |
+              |              Google Cloud
+              |              サービスアカウント
+              |
+      手動登録 / CSV取込（将来）
+      note / X / MQL5 Market
+
+    定期実行：
+    エックスサーバー Cron
+            |
+            v
+    https://自サイト/wp-cron.php?doing_wp_cron
+            |
+            v
+    WordPress定期処理（WP-Cron）
+            |
+            v
+    GA4同期処理
+
+3. 実行環境・採用技術
+
+-   ホスティング：エックスサーバー
+-   CMS・サーバー側処理：WordPressプラグイン（PHP）
+-   フロントエンド：HTML / CSS / JavaScript
+-   グラフ描画：Chart.js
+-   データ保存：WordPressデータベース内の専用テーブル
+-   外部分析データ：Google Analytics Data API（GA4）
+-   定期実行：WordPress Cron + エックスサーバーのCron設定
+-   モバイル対応：レスポンシブWeb UI、Web App Manifest、Service Worker
+-   通信：HTTPS必須
+
+4. 機能要件
+
+4.1 ダッシュボード表示
+
+-   note、X、WordPress / GA4、MQL5 Marketの実績を一画面で確認できる。
+-   期間を7日、30日、90日、365日から選択できる。
+-   サービスと指標を選び、日別推移グラフを表示する。
+-   データ未登録の場合は「未取得」と表示し、ゼロ実績と混同させない。
+-   取得状況・最終更新時刻を確認できる。
+-   スマートフォンの画面幅に合わせてカードやグラフを再配置する。
+
+4.2 GA4データ取得
+
+初期版では、GA4 Data APIから日別に次の指標を取得する。
+
+  保存指標キー   GA4指標           表示名
+  -------------- ----------------- ------------
+  page_views     screenPageViews   表示回数
+  sessions       sessions          セッション
+  users          totalUsers        ユーザー
+
+-   取得期間：前日までの直近30日間
+-   日付単位でデータベースに保存する。
+-   同じ日付・指標の再取得時は更新し、二重登録を避ける。
+-   APIエラー時はエラー内容と最終試行結果を管理画面に記録する。
+-   GA4の画面表示値とAPI取得値を照合して初期動作を検証する。
+
+4.3 その他サービスのデータ取得
+
+  ---------------------------------------------------------------------------------------
+  サービス                初期版の方式            将来の接続方針
+  ----------------------- ----------------------- ---------------------------------------
+  note                    管理者による手動登録    公式API・エクスポート手段の可否を確認
+
+  X                       管理者による手動登録    APIの契約プラン・権限・指標を確認
+
+  MQL5 Market             管理者による手動登録    セラー画面のエクスポート可否を確認
+
+  WordPress / GA4         GA4 Data                同期監視とエラー通知を追加
+                          APIによる自動取得       
+  ---------------------------------------------------------------------------------------
+
+認証情報を必要とする外部サイトについて、ログイン画面の自動スクレイピングやパスワード保存を初期設計の前提にしない。
+
+5. データ設計
+
+5.1 テーブル
+
+テーブル名：{WordPress接頭辞}med_snapshots
+
+  カラム         型                説明
+  -------------- ----------------- -----------------------------
+  id             BIGINT UNSIGNED   主キー
+  service        VARCHAR(32)       wordpress / note / x / mql5
+  metric         VARCHAR(64)       指標キー
+  metric_date    DATE              対象日
+  metric_value   DECIMAL(20,4)     指標値
+  source         VARCHAR(32)       ga4 / manual / csv等
+  created_at     DATETIME          保存・更新時刻
+
+一意制約：service + metric + metric_date + source
+
+5.2 指標キー
+
+  -----------------------------------------------------------------------
+  サービス                            指標キー
+  ----------------------------------- -----------------------------------
+  note                                page_views, impressions, likes,
+                                      comments
+
+  X                                   followers, impressions, likes,
+                                      reposts, replies, link_clicks
+
+  WordPress / GA4                     page_views, sessions, users,
+                                      organic_sessions
+
+  MQL5 Market                         sales_count, revenue, downloads
+  -----------------------------------------------------------------------
+
+注：初期版ではGA4から自動取得するのは
+page_views、sessions、users。organic_sessions
+は指標名と取得仕様を別途確認してから実装する。サービスごとに同じ指標キーがあっても、serviceで区別する。
+
+6. REST API設計
+
+すべてのエンドポイントはWordPress管理者権限（manage_options）を要求する。
+
+6.1 実績取得
+
+-   メソッド：GET
+-   パス：/wp-json/med/v1/summary
+-   パラメータ：days（1〜365、既定値30）
+-   応答：日別データ、サービス別最終更新時刻、サーバー時刻
+
+6.2 実績登録
+
+-   メソッド：POST
+-   パス：/wp-json/med/v1/snapshot
+-   JSON例：
+
+    {
+      "service": "note",
+      "metric": "page_views",
+      "date": "2026-10-16",
+      "value": 123,
+      "source": "manual"
+    }
+
+-   許可済みサービス・指標のみ保存する。
+-   日付形式と数値を検証する。
+-   REST nonceを含む管理者認証を利用する。
+
+6.3 GA4接続テスト
+
+-   メソッド：POST
+-   パス：/wp-json/med/v1/ga4-test
+-   管理者のみ実行可能。
+-   管理画面からの接続テストボタンで呼び出し、認証・API応答・データ保存を検証する。
+
+7. GA4認証設計
+
+1.  Google CloudプロジェクトでGoogle Analytics Data APIを有効にする。
+2.  サービスアカウントを作成し、JSON鍵を発行する。
+3.  GA4プロパティのアクセス管理で、サービスアカウントを閲覧者として追加する。
+4.  JSON鍵を可能な限り public_html の外に配置し、アクセス権を制限する。
+5.  WordPressの wp-config.php
+    に数値のGA4プロパティIDとJSONファイルの絶対パスを定義する。
+
+設定例：
+
+    define('MED_GA4_PROPERTY_ID', '123456789');
+    define(
+        'MED_GA4_SERVICE_ACCOUNT_JSON_PATH',
+        '/home/サーバーID/secure/ga4-service-account.json'
+    );
+
+秘密鍵をWordPressメディアライブラリ、公開ディレクトリ、ソース管理リポジトリに置かない。実際のパスやファイル権限は、エックスサーバーの契約環境で確認する。
+
+8. 定期実行設計
+
+-   プラグインはWordPressの med_hourly_sync
+    イベントを1時間ごとに登録する。
+-   エックスサーバーのCron設定から15分ごとに wp-cron.php を起動する。
+-   起動コマンド例：
+
+    curl -fsS 'https://YOUR-DOMAIN.example/wp-cron.php?doing_wp_cron' >/dev/null 2>&1
+
+-   ドメインは実際のサイトURLに置き換える。
+-   エックスサーバーで利用可能なコマンド・パスをサーバーパネルで確認する。
+-   外部Cronの動作確認後に限り、必要に応じて DISABLE_WP_CRON
+    を設定する。
+-   同期失敗時は最終状態を保存し、管理画面で確認できるようにする。
+
+9. PWA設計
+
+-   Web App
+    Manifestを提供し、アプリ名、開始URL、表示モード、テーマ色を定義する。
+-   Service Workerを登録し、基本的なPWA起動要件を満たす。
+-   HTTPSで配信する。
+-   Android
+    Chrome等から「ホーム画面に追加」または「アプリをインストール」を利用する。
+-   ダッシュボードAPI応答はキャッシュしない。現在値の表示にはネットワーク接続が必要。
+-   初期版では専用アイコンと本格的なオフライン画面は未実装。正式運用前にアイコンとキャッシュ方針を追加する。
+
+10. セキュリティ要件
+
+-   HTTPSを必須とする。
+-   ダッシュボード表示とREST APIは管理者権限で保護する。
+-   外部API秘密鍵は公開領域の外に置く。
+-   入力データは許可リスト、型、日付形式を検証する。
+-   管理者以外にデータ取得・登録APIを公開しない。
+-   WordPressやプラグインを定期的に更新する。
+-   バックアップを取得してからプラグインを導入する。
+-   ページキャッシュやCDNを使用している場合、管理者専用ダッシュボードがキャッシュされないようにする。
+
+11. 導入・試験手順
+
+1.  WordPressとデータベースをバックアップする。
+2.  プラグインZIPをアップロードして有効化する。
+3.  パーマリンク設定を再保存する。
+4.  管理者専用のダッシュボード固定ページを作成する。
+5.  Google CloudとGA4のサービスアカウント設定を行う。
+6.  wp-config.php にプロパティIDと鍵ファイルのパスを追加する。
+7.  管理画面でGA4接続テストを実行する。
+8.  GA4の画面値と取得値を日付・指標ごとに照合する。
+9.  エックスサーバーのCronを登録し、実行ログや更新時刻を確認する。
+10. スマートフォンからHTTPSでアクセスし、ホーム画面追加と表示崩れを確認する。
+11. 管理者以外では画面・APIにアクセスできないことを確認する。
+12. GA4停止、認証失敗、データ未登録時に誤ったゼロ値を表示しないことを確認する。
+
+12. 初期版の制約と未実装項目
+
+-   note、X、MQL5 Marketの自動同期は未実装。
+-   CSVファイルのアップロード・自動取込UIは未実装。
+-   PWAアイコンは未設定。
+-   オフライン時に最新の数値を表示する機能は未実装。
+-   同期失敗のメール通知・外部監視は未実装。
+-   売上の通貨単位、返金・キャンセルの扱い、サービス間の指標定義は正式接続前に決定する。
+-   本番公開前にPHP構文チェック、WordPressバージョン互換性、実機での動作確認を行う。
+
+13. 完了条件
+
+-   管理者がスマートフォンからダッシュボードを開ける。
+-   GA4のページビュー、セッション、ユーザー数が日別に取得・保存される。
+-   期間変更で表示対象の日付範囲が変わる。
+-   cronによる定期処理が安定して起動する。
+-   未接続サービスは「未取得」と表示され、架空の数値が表示されない。
+-   管理者以外がデータを閲覧・登録できない。
+-   秘密鍵が公開領域に露出していない。
+
+------------------------------------------------------------------------
+
+付録A：関連資料
+
+-   WordPress REST
+    API認証：https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/
+-   Google Analytics Data
+    APIクイックスタート：https://developers.google.com/analytics/devguides/reporting/data/v1/quickstart
+-   Google Analytics Data
+    APIの基本：https://developers.google.com/analytics/devguides/reporting/data/v1/basics
+-   WordPressプラグイン開発：https://developer.wordpress.org/plugins/
+-   Xserver公式マニュアル：https://www.xserver.ne.jp/manual/

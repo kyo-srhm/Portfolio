@@ -1,0 +1,10 @@
+# 秘密情報（絶対にコミットしない）
+.env
+*service-account*.json
+secure/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
