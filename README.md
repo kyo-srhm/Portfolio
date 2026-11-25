@@ -1,5 +1,7 @@
 # Portfolio
 
+**日本語** | [English](README.en.md)
+
 はまお（ものぐさパパん）の成果物まとめです。
 AI（Claude Code）と二人三脚で、自動売買の研究、Webサイトとプラグインの開発、実績を集めるダッシュボードづくり、記事の執筆をしています。
 
@@ -74,17 +76,6 @@ AI（Claude Code）と二人三脚で、自動売買の研究、Webサイトと�
 - ルールがはっきりしたインジケーター・EA の新規作成
 - MQL4 から MQL5 への移植
 - ストラテジーテスターでの動作確認とバックテストの報告
-
-<details>
-<summary>English summary</summary>
-
-- Seller on MQL5 Market: [Gold Variable Dow](https://www.mql5.com/en/market/product/201856), [Gold Weekly Lines](https://www.mql5.com/en/market/product/205106). Also running the MQL5 signal "Gold Daily One".
-- Built 30+ XAUUSD Expert Advisors, merged 7 strategies into one EA with per-strategy magic numbers, and wrote an SL manager for manual positions (ATR / swing trailing, never moves SL backward, minimum step, no requests while the market is closed).
-- Typical fixes: orders rejected at market close are now retried; risk caps per trade, per day and on concurrent positions; demo-only guards on by default.
-- Automated Strategy Tester runs from Python to compare many EAs under the same conditions.
-- Available for: EA / indicator modifications, new indicators or EAs with a clear spec, MQL4 to MQL5 conversion, Strategy Tester verification.
-
-</details>
 
 > 売買ロジックのソースコードは公開していません。数字はすべて過去データのバックテスト結果で、将来の成果や投資を勧めるものではありません。
 
